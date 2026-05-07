@@ -106,6 +106,92 @@ class CRUDProduct(CRUDBase[Product]):
             .distinct()
         )
         return [row for row in result.scalars().all() if row]
+    
+    async def update(
+        self, 
+        db: AsyncSession, 
+        *, 
+        db_obj: Product, 
+        obj_in: ProductUpdate
+    ) -> Product:
+        """更新商品"""
+        update_data = obj_in.model_dump(exclude_unset=True)
+        return await super().update(db, db_obj=db_obj, obj_in=update_data)
+
+
+    async def get_active_products(
+        self,
+        db: AsyncSession,
+        *,
+        skip: int = 0,
+        limit: int = 100
+    ) -> list[Product]:
+        """获取上架商品列表（前台使用）"""
+        result = await db.execute(
+            select(Product)
+            .where(Product.is_active == True)
+            .where(Product.stock > 0)
+            .offset(skip)
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def check_stock(
+        self, 
+        db: AsyncSession, 
+        *, 
+        product_id: int, 
+        quantity: int
+    ) -> Tuple[bool, Optional[Product]]:
+        """
+        检查商品库存是否足够
+        
+        返回：(是否足够, 商品对象)
+        """
+        product = await self.get(db, id=product_id)
+        if not product:
+            return False, None
+        if not product.is_active:
+            return False, product
+        if product.stock < quantity:
+            return False, product
+        return True, product
+
+    async def reduce_stock(
+        self,
+        db: AsyncSession,
+        *,
+        product_id: int,
+        quantity: int
+    ) -> Optional[Product]:
+        """
+        减少商品库存（下单时使用）
+        
+        注意：调用前应先使用 check_stock 验证
+        """
+        product = await self.get(db, id=product_id)
+        if product:
+            product.stock -= quantity
+            await db.commit()
+            await db.refresh(product)
+        return product
+
+    async def increase_stock(
+        self,
+        db: AsyncSession,
+        *,
+        product_id: int,
+        quantity: int
+    ) -> Optional[Product]:
+        """
+        增加商品库存（取消订单/退货时使用）
+        """
+        product = await self.get(db, id=product_id)
+        if product:
+            product.stock += quantity
+            await db.commit()
+            await db.refresh(product)
+        return product
 
 # 单例实例
 product = CRUDProduct(Product)
